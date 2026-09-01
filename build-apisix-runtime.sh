@@ -21,12 +21,19 @@ ld_opt=${ld_opt:-"-L$zlib_prefix/lib -L$pcre_prefix/lib -L$OPENSSL_PREFIX/lib -W
 
 # dependencies for building openresty
 OPENSSL_VERSION=${OPENSSL_VERSION:-"3.4.1"}
-OPENRESTY_VERSION=${OPENRESTY_VERSION:-"1.29.2.4"}
+# 1.29.2.5 is the latest of the 1.29 stable line, which the API7 patch
+# modules (apisix-nginx-module, ngx_multi_upstream_module) officially
+# support; see docs/adr/0003.
+OPENRESTY_VERSION=${OPENRESTY_VERSION:-"1.29.2.5"}
 # OPENRESTY_SOURCE=master builds from the openresty/openresty master branch
 # (via util/mirror-tarballs) instead of a pinned release tarball. The real
-# version is read from the repo's util/ver at build time and written to
-# /tmp/openresty-version so the workflow can record it.
+# version is read from the repo's util/ver at build time. Only use it once
+# the API7 patch modules ship nginx-1.31 patches; the stable default stays
+# on the 1.29 release line (docs/adr/0003).
 OPENRESTY_SOURCE=${OPENRESTY_SOURCE:-"release"}
+# Provenance stamp recorded for every build so the workflow can tell which
+# OpenResty source the runtime was built against.
+OR_SOURCE_STAMP=${OR_SOURCE_STAMP:-"release-${OPENRESTY_VERSION}"}
 if [[ ! "$OPENRESTY_VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
     echo "ERROR: invalid OPENRESTY_VERSION: $OPENRESTY_VERSION" >&2
     exit 1
@@ -97,14 +104,18 @@ install_openssl_3
 if [ "$OPENRESTY_SOURCE" == "master" ]; then
     rm -rf openresty-src openresty-master.tar.gz
     git clone --depth=1 https://github.com/openresty/openresty.git openresty-src
-    echo "Building OpenResty from master commit $(git -C openresty-src rev-parse HEAD)"
-    git -C openresty-src rev-parse HEAD > /tmp/openresty-commit
+    OR_MASTER_COMMIT=$(git -C openresty-src rev-parse HEAD)
+    echo "Building OpenResty from master commit $OR_MASTER_COMMIT"
+    echo "$OR_MASTER_COMMIT" > /tmp/openresty-commit
     ( cd openresty-src && ./util/mirror-tarballs )
     OR_SRC_VERSION=$( cd openresty-src && ./util/ver )
     echo "$OR_SRC_VERSION" > /tmp/openresty-version
     echo "OpenResty master source version: $OR_SRC_VERSION"
     tar -zxvpf openresty-src/openresty-${OR_SRC_VERSION}.tar.gz > /dev/null
 else
+    # The release path also records a stamp; the file must exist in both modes
+    # because the runtime Dockerfile COPYs it unconditionally.
+    echo "$OR_SOURCE_STAMP" > /tmp/openresty-commit
     wget --no-check-certificate "https://openresty.org/download/openresty-${OPENRESTY_VERSION}.tar.gz"
     tar -zxvpf "openresty-${OPENRESTY_VERSION}.tar.gz" > /dev/null
 fi

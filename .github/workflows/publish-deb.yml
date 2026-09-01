@@ -10,9 +10,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Build the runtime from the openresty/openresty master branch instead of a
-  # pinned release tarball (see docs/adr/0001).
-  OPENRESTY_SOURCE: master
+  # Default to the OpenResty 1.29 stable line: the API7 patch modules only
+  # ship patches up to nginx 1.29.2 (docs/adr/0003). Switching back to the
+  # master-branch source build is a one-line change once they ship nginx-1.31
+  # patches (mechanism kept in build-apisix-runtime.sh, see docs/adr/0001).
+  OPENRESTY_SOURCE: release
   VAR_DEB_WORKBENCH_DIR: /tmp/output
 
 jobs:
@@ -35,7 +37,7 @@ jobs:
           corepack enable pnpm
           mkdir -p "${VAR_DEB_WORKBENCH_DIR}"
 
-      - name: Build apisix-runtime deb (OpenResty master source)
+      - name: Build apisix-runtime deb
         run: |
           make package type=deb app=apisix-runtime runtime_version=0.0.0 \
             image_base=debian image_tag=bookworm-slim \
@@ -56,8 +58,8 @@ jobs:
           # Build only the apisix image on top of the runtime image built in
           # the previous step, then package it. The top-level
           # `make package app=apisix` target would rebuild apisix-runtime by
-          # cloning the api7 upstream branch, bypassing the OpenResty master
-          # source built above.
+          # cloning the api7 upstream branch, bypassing the OpenResty source
+          # built above.
           make build-fpm
           make build-apisix-deb checkout=${TAG_VERSION} version=${TAG_VERSION} \
             image_base=debian image_tag=bookworm-slim \
