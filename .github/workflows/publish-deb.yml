@@ -73,6 +73,7 @@ jobs:
         run: |
           docker run --rm \
             -v "${VAR_DEB_WORKBENCH_DIR}:/output" \
+            -v "$PWD/.github/smoke-limit.lua:/smoke-limit.lua" \
             -e DEB=apisix_${TAG_VERSION}-0~debianbookworm-slim_amd64.deb \
             debian:bookworm bash -exc '
               apt-get update -qq
@@ -80,10 +81,7 @@ jobs:
               test -x /usr/local/openresty/bin/openresty
               /usr/local/openresty/bin/openresty -V 2>&1 | head -3
               test -f /usr/local/openresty/lualib/resty/limit/traffic.lua
-              /usr/local/openresty/luajit/bin/luajit -e '
-                "package.path = '\''/usr/local/openresty/lualib/?.lua;/usr/local/openresty/lualib/?/init.lua;'\'' .. package.path;"
-                "assert(pcall(require, '\''resty.limit.traffic'\''))"
-              '
+              /usr/local/openresty/luajit/bin/luajit /smoke-limit.lua
               /usr/local/apisix/bin/apisix version
             '
 

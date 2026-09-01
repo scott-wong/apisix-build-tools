@@ -20,7 +20,9 @@ ld_opt=${ld_opt:-"-L$zlib_prefix/lib -L$pcre_prefix/lib -L$OPENSSL_PREFIX/lib -W
 
 
 # dependencies for building openresty
-OPENSSL_VERSION=${OPENSSL_VERSION:-"3.4.1"}
+# 3.5.x is the current LTS line (supported through 2030-04); 3.5.8 is its
+# latest security patch release (2026-08-25).
+OPENSSL_VERSION=${OPENSSL_VERSION:-"3.5.8"}
 # 1.29.2.5 is the latest of the 1.29 stable line, which the API7 patch
 # modules (apisix-nginx-module, ngx_multi_upstream_module) officially
 # support; see docs/adr/0003.
