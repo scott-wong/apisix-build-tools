@@ -94,7 +94,9 @@ build_apisix_runtime_deb() {
         arch_path="arm64/"
     fi
     DEBIAN_FRONTEND=noninteractive apt-get update --fix-missing
-    DEBIAN_FRONTEND=noninteractive apt-get install -y sudo git libreadline-dev lsb-release libssl-dev perl build-essential gcc g++ xz-utils curl cpanminus
+    # dos2unix (unix2dos) is required by OpenResty's util/mirror-tarballs when
+    # building from the master branch source.
+    DEBIAN_FRONTEND=noninteractive apt-get install -y sudo git libreadline-dev lsb-release libssl-dev perl build-essential gcc g++ xz-utils curl cpanminus dos2unix
     DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends wget gnupg ca-certificates 
     wget -O - https://openresty.org/package/pubkey.gpg | apt-key add -
 
