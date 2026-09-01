@@ -82,7 +82,8 @@ jobs:
               /usr/local/openresty/bin/openresty -V 2>&1 | head -3
               test -f /usr/local/openresty/lualib/resty/limit/traffic.lua
               /usr/local/openresty/luajit/bin/luajit /smoke-limit.lua
-              /usr/local/apisix/bin/apisix version
+              test -x /usr/bin/apisix
+              /usr/bin/apisix version
             '
 
       - name: Upload deb artifacts
