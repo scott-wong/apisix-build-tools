@@ -199,11 +199,12 @@ fi
 
 # Overlay the vendored patch.sh scripts (upstream PRs
 # api7/ngx_multi_upstream_module#21 and api7/apisix-nginx-module#125) so the
-# cloned modules recognize openresty-1.31.1.*. Keep in sync with the cloned
-# module versions.
+# cloned modules recognize openresty-1.31.1.*. The scripts resolve their patch
+# files relative to their own location, so copy the whole overlay directory
+# into each module. Keep in sync with the cloned module versions.
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-cp "$script_dir"/patches/ngx_multi_upstream_module/patch.sh \
-    ngx_multi_upstream_module-${ngx_multi_upstream_module_ver}/patch.sh
+cp "$script_dir"/patches/ngx_multi_upstream_module/* \
+    ngx_multi_upstream_module-${ngx_multi_upstream_module_ver}/
 cp "$script_dir"/patches/apisix-nginx-module/patch.sh \
     "apisix-nginx-module-${apisix_nginx_module_ver}/patch/patch.sh"
 
