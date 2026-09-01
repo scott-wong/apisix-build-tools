@@ -181,12 +181,23 @@ else
         "$ngx_http_ffi_client_dir"
 fi
 
+# 1.29.2.5 shares 1.29.2.4's bundle versions (ngx_lua 0.10.31rc2, etc.), so
+# its patches apply cleanly; apisix-nginx-module's patch.sh only matches the
+# literal "openresty-1.29.2.4" directory name, so hand the patch scripts an
+# alias directory named for the version they target.
+if [ "$or_dir" == "openresty-1.29.2.5" ]; then
+    ln -s openresty-1.29.2.5 openresty-1.29.2.4
+    patch_dir_alias="openresty-1.29.2.4"
+else
+    patch_dir_alias="$or_dir"
+fi
+
 cd ngx_multi_upstream_module-${ngx_multi_upstream_module_ver} || exit 1
-./patch.sh ../${or_dir}
+./patch.sh ../${patch_dir_alias}
 cd ..
 
 cd "apisix-nginx-module-${apisix_nginx_module_ver}/patch" || exit 1
-./patch.sh ../../${or_dir}
+./patch.sh ../../${patch_dir_alias}
 cd ../..
 
 cd wasm-nginx-module-${wasm_nginx_module_ver} || exit 1
