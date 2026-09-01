@@ -1,0 +1,95 @@
+name: Build and Publish RPM Package
+
+on:
+  push:
+    tags:
+      - "apisix/*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The runtime is built from the pinned OpenResty release line (see
+  # docs/adr/0003); the deb workflow shares this setting.
+  OPENRESTY_SOURCE: release
+  VAR_RPM_WORKBENCH_DIR: /tmp/output
+
+jobs:
+  publish_apisix:
+    name: Build apisix rpm for EL8 (x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Extract tag version
+        run: |
+          echo "TAG_VERSION=${GITHUB_REF##*/}" >> "$GITHUB_ENV"
+
+      - name: Init build env
+        run: |
+          sudo apt-get update
+          sudo n lts
+          corepack enable pnpm
+          mkdir -p "${VAR_RPM_WORKBENCH_DIR}"
+
+      - name: Build apisix-runtime rpm
+        run: |
+          make build-fpm
+          make build-apisix-runtime-rpm app=apisix-runtime runtime_version=0.0.0 \
+            image_base=rockylinux image_tag=8 \
+            openresty_source=${OPENRESTY_SOURCE}
+          make package-apisix-runtime-rpm version=0.0.0 \
+            image_base=rockylinux image_tag=8 \
+            openresty_source=${OPENRESTY_SOURCE} runtime_version=0.0.0
+          mv ./output/apisix-runtime-0.0.0-0.el8.x86_64.rpm "${VAR_RPM_WORKBENCH_DIR}/"
+
+      - name: Record runtime provenance
+        run: |
+          OR_COMMIT=$(docker run --rm apache/apisix-runtime-rpm:0.0.0 cat /tmp/openresty-commit || true)
+          OR_VERSION=$(docker run --rm apache/apisix-runtime-rpm:0.0.0 cat /tmp/openresty-version || true)
+          {
+            echo "OPENRESTY_COMMIT=${OR_COMMIT}"
+            echo "OPENRESTY_VERSION=${OR_VERSION}"
+          } >> "$GITHUB_ENV"
+
+      - name: Build apisix rpm
+        run: |
+          # Build only the apisix image on top of the runtime image built in
+          # the previous step, then package it. The top-level
+          # `make package app=apisix` target would rebuild apisix-runtime by
+          # cloning the api7 upstream branch, bypassing the OpenResty source
+          # built above.
+          make build-apisix-rpm checkout=${TAG_VERSION} version=${TAG_VERSION} \
+            image_base=rockylinux image_tag=8 \
+            runtime_version=0.0.0
+          make package-apisix-rpm version=${TAG_VERSION} \
+            image_base=rockylinux image_tag=8 \
+            openresty=apisix-runtime runtime_version=0.0.0
+          mv ./output/apisix-${TAG_VERSION}-0.el8.x86_64.rpm "${VAR_RPM_WORKBENCH_DIR}/"
+
+      - name: Smoke test on RockyLinux 8
+        run: |
+          docker run --rm \
+            -v "${VAR_RPM_WORKBENCH_DIR}:/output" \
+            -v "$PWD/.github/smoke-limit.lua:/smoke-limit.lua" \
+            -e RPM=apisix-${TAG_VERSION}-0.el8.x86_64.rpm \
+            rockylinux:8 bash -exc '
+              dnf -y localinstall /output/$RPM --nogpgcheck
+              test -x /usr/local/openresty/bin/openresty
+              /usr/local/openresty/bin/openresty -V 2>&1 | head -3
+              test -f /usr/local/openresty/lualib/resty/limit/traffic.lua
+              /usr/local/openresty/luajit/bin/luajit /smoke-limit.lua
+              test -x /usr/bin/apisix
+              /usr/bin/apisix version
+            '
+
+      - name: Upload rpm artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "apisix_${{ env.TAG_VERSION }}_el8_x86_64"
+          path: |
+            ${{ env.VAR_RPM_WORKBENCH_DIR }}/*.rpm
+          if-no-files-found: error

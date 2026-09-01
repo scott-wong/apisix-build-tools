@@ -1,9 +1,9 @@
 name: Build and Publish DEB Package
 
+# Temporarily disabled: the label-triggered build is replaced by the EL8 RPM
+# workflow (publish-rpm.yml). Restore the `push: tags` trigger to re-enable.
 on:
-  push:
-    tags:
-      - "apisix/*"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
