@@ -7,13 +7,15 @@ dist=$(cat /tmp/dist)
 ARCH=${ARCH:-`(uname -m | tr '[:upper:]' '[:lower:]')`}
 
 # Determine the dependencies
-dep_ldap="openldap-devel"
-dep_libyaml="libyaml-devel"
+# Runtime libraries bundled under /usr/local/openresty (OpenSSL, libyaml) must
+# NOT appear in the package's requires: libyaml-devel is a build-time leftover
+# and uninstallable on a bare target host (run #3 failed on
+# `nothing provides libyaml-devel`). Only true runtime deps stay listed.
+dep_ldap="openldap"
 if [ "$PACKAGE_TYPE" == "deb" ]
 then
     # the pkg contains the so library could be libldap-2.5 or libldap-2.4-2
-	dep_ldap="libldap2-dev"
-    dep_libyaml="libyaml-dev"
+	dep_ldap="libldap-2.5-0"
 fi
 dep_pcre="pcre"
 if [ "$PACKAGE_TYPE" == "deb" ]
@@ -68,7 +70,6 @@ then
         -d "$dep_ldap" \
         -d "$dep_pcre" \
         -d "$dep_which" \
-        -d "$dep_libyaml" \
         -d "$dep_libxml2" \
         -d "$dep_libxslt" \
         --post-install post-install-apisix-runtime.sh \
