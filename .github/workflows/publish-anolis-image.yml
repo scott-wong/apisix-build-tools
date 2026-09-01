@@ -170,11 +170,12 @@ jobs:
           docker pull "$IMAGE"
           docker run --rm "$IMAGE" /usr/bin/apisix version
           docker run --rm "$IMAGE" /usr/local/openresty/bin/openresty -V 2>&1 | head -n 5
-          docker run --rm "$IMAGE" bash -exc '
+          docker run --rm -v "$PWD/.github/smoke-limit.lua:/smoke-limit.lua" "$IMAGE" bash -exc '
             test -x /usr/bin/apisix
             test -x /usr/local/openresty/bin/openresty
             test -f /usr/local/openresty/lualib/resty/limit/traffic.lua
-            /usr/local/openresty/luajit/bin/luajit -e "require(\"resty.limit.traffic\"); print(\"traffic lua ok\")"
+            /usr/local/openresty/luajit/bin/luajit /smoke-limit.lua
+            echo "traffic lua ok via smoke-limit.lua"
           '
           # Optional: test apisix init (without etcd)
           docker run --rm "$IMAGE" bash -exc '
