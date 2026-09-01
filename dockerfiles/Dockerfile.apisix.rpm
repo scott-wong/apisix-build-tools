@@ -21,7 +21,9 @@ ARG IMAGE_TAG
 ARG CODE_PATH
 
 # install dependencies
-RUN yum install -y libyaml-devel
+# libyaml-devel lives in the CRB (CodeReady Builder, aka PowerTools) repo on
+# el8, which is disabled by default in the rockylinux:8 image.
+RUN dnf config-manager --set-enabled powertools && yum install -y libyaml-devel
 RUN /install-common.sh install_apisix_dependencies_rpm
 
 ENV checkout_v=${checkout_v}
