@@ -23,10 +23,12 @@ ld_opt=${ld_opt:-"-L$zlib_prefix/lib -L$pcre_prefix/lib -L$OPENSSL_PREFIX/lib -W
 # 3.5.x is the current LTS line (supported through 2030-04); 3.5.8 is its
 # latest security patch release (2026-08-25).
 OPENSSL_VERSION=${OPENSSL_VERSION:-"3.5.8"}
-# 1.29.2.5 is the latest of the 1.29 stable line, which the API7 patch
-# modules (apisix-nginx-module, ngx_multi_upstream_module) officially
-# support; see docs/adr/0003.
-OPENRESTY_VERSION=${OPENRESTY_VERSION:-"1.29.2.5"}
+# 1.31.1.1 is the latest OpenResty release. The API7 patch modules' patch.sh
+# scripts do not recognize it yet (upstream PRs api7/ngx_multi_upstream_module#21
+# and api7/apisix-nginx-module#125 fix that), so this repo vendors the patched
+# scripts under patches/ and overlays them onto the cloned modules; the 1.29.2
+# patch sets apply to 1.31.1 as-is (see docs/adr/0004).
+OPENRESTY_VERSION=${OPENRESTY_VERSION:-"1.31.1.1"}
 # OPENRESTY_SOURCE=master builds from the openresty/openresty master branch
 # (via util/mirror-tarballs) instead of a pinned release tarball. The real
 # version is read from the repo's util/ver at build time. Only use it once
@@ -183,16 +185,27 @@ else
         "$ngx_http_ffi_client_dir"
 fi
 
-# 1.29.2.5 shares 1.29.2.4's bundle versions (ngx_lua 0.10.31rc2, etc.), so
-# its patches apply cleanly; apisix-nginx-module's patch.sh only matches the
-# literal "openresty-1.29.2.4" directory name, so hand the patch scripts an
-# alias directory named for the version they target.
+# 1.29.2.5 shares 1.29.2.4's bundle versions, so its patches apply cleanly;
+# apisix-nginx-module's patch.sh only matches the literal "openresty-1.29.2.4"
+# directory name. Hand the patch scripts an alias directory named for the
+# version they target. (1.31.1.x is handled by the vendored scripts below and
+# needs no alias.)
 if [ "$or_dir" == "openresty-1.29.2.5" ]; then
     ln -s openresty-1.29.2.5 openresty-1.29.2.4
     patch_dir_alias="openresty-1.29.2.4"
 else
     patch_dir_alias="$or_dir"
 fi
+
+# Overlay the vendored patch.sh scripts (upstream PRs
+# api7/ngx_multi_upstream_module#21 and api7/apisix-nginx-module#125) so the
+# cloned modules recognize openresty-1.31.1.*. Keep in sync with the cloned
+# module versions.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+cp "$script_dir"/patches/ngx_multi_upstream_module/patch.sh \
+    ngx_multi_upstream_module-${ngx_multi_upstream_module_ver}/patch.sh
+cp "$script_dir"/patches/apisix-nginx-module/patch.sh \
+    "apisix-nginx-module-${apisix_nginx_module_ver}/patch/patch.sh"
 
 cd ngx_multi_upstream_module-${ngx_multi_upstream_module_ver} || exit 1
 ./patch.sh ../${patch_dir_alias}

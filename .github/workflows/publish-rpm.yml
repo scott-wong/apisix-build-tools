@@ -11,7 +11,7 @@ concurrency:
 
 env:
   # The runtime is built from the pinned OpenResty release line (see
-  # docs/adr/0003); the deb workflow shares this setting.
+  # docs/adr/0004); the deb workflow shares this setting.
   OPENRESTY_SOURCE: release
   VAR_RPM_WORKBENCH_DIR: /tmp/output
 

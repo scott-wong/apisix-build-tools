@@ -7,3 +7,5 @@
 考虑过的替代方案：把 1.29.2 补丁集 vendor 进本仓库并自行移植到 1.31.4——成本是持续的补丁维护负担，且 nginx 1.31 对 upstream 行为的变更未必能靠改 hunk 解决，收益（吃到 master 修复）与其不确定性不匹配，被否决；等待上游发布 1.31 补丁——即本决定。
 
 后果：deb 内嵌的 runtime 基于 1.29.2.5 而非 OpenResty master；每次构建仍记录来源 stamp（`openresty-commit` 文件，release 模式下内容为 `release-1.29.2.5`，master 模式下为真实 commit SHA）。
+
+**已被 ADR-0004 取代**：社区 PR（#21/#125/#483）提供了 1.31.1 的 patch.sh 白名单改动，默认版本已升至 1.31.1.1。

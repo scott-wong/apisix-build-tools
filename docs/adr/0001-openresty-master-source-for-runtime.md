@@ -7,3 +7,5 @@
 考虑过的替代方案：跟随最新稳定线（1.29.x，兼容风险低）；可配置、默认稳定线。均被否决——用户明确要 master 源码的时效性。
 
 后果：构建失败时采取 fix-forward 策略（改补丁/脚本直到编过并冒烟通过），不自动回退旧版、不静默降级。同一 APISIX 标签在不同日期构建的产物可能内嵌不同运行时；每次构建记录 OpenResty commit SHA 以便追溯。
+
+**已被 ADR-0003/0004 修正**：master 源码模式保留为可选项（`OPENRESTY_SOURCE=master`）；默认版本改走 release tarball（当前 1.31.1.1），通过 vendor 的 patch.sh 覆盖解决模块白名单问题。
