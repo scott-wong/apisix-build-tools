@@ -6,137 +6,85 @@ on:
       - "apisix/*"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # Build the runtime from the openresty/openresty master branch instead of a
+  # pinned release tarball (see docs/adr/0001).
+  OPENRESTY_SOURCE: master
+  VAR_DEB_WORKBENCH_DIR: /tmp/output
 
 jobs:
   publish_apisix:
-    name: Build and Publish deb Package
-    strategy:
-      fail-fast: false
-      matrix:
-        platform:
-          - runner: ubuntu-latest
-            arch: amd64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-        target:
-          - os: debian
-            codename: debian12
-            release: bookworm-slim
-          - os: ubuntu
-            codename: noble
-            release: 24.04
-    runs-on: ${{ matrix.platform.runner }}
-    timeout-minutes: 60
-    env:
-      VAR_DEB_WORKBENCH_DIR: /tmp/output
-      VAR_COS_BUCKET_REPO: ${{ secrets.VAR_COS_BUCKET_REPO }}
-      VAR_COS_BUCKET_CI: ${{ secrets.VAR_COS_BUCKET_CI }}
-      VAR_OS: ${{ matrix.target.os }}
-      VAR_CODENAME: ${{ matrix.target.codename }}
-      VAR_OS_RELEASE: ${{ matrix.target.release }}
-      ARCH: ${{ matrix.platform.arch }}
-
+    name: Build apisix deb for Debian 12 (amd64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - name: Check out code
-        uses: actions/checkout@v2.3.5
-        with:
-          submodules: recursive
+        uses: actions/checkout@v4
 
-      - name: Init basic publish env
+      - name: Extract tag version
+        run: |
+          echo "TAG_VERSION=${GITHUB_REF##*/}" >> "$GITHUB_ENV"
+
+      - name: Init build env
         run: |
           sudo apt-get update
-          # install node.js and pnpm
           sudo n lts
           corepack enable pnpm
           mkdir -p "${VAR_DEB_WORKBENCH_DIR}"
 
-      - name: Extract Tags version
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        shell: bash
+      - name: Build apisix-runtime deb (OpenResty master source)
         run: |
-          echo "TAG_VERSION=${GITHUB_REF##*/}" >> "$GITHUB_ENV"
+          make package type=deb app=apisix-runtime runtime_version=0.0.0 \
+            image_base=debian image_tag=bookworm-slim \
+            openresty_source=${OPENRESTY_SOURCE}
+          mv ./output/apisix-runtime_0.0.0-0~debianbookworm-slim_amd64.deb "${VAR_DEB_WORKBENCH_DIR}/"
 
-      - name: Extract Tags Type
-        if: ${{ startsWith(github.ref, 'refs/tags/') }}
-        shell: bash
+      - name: Record runtime provenance
         run: |
-          type=$(echo ${GITHUB_REF} | awk -F '/' '{print $3}')
-          echo "TAG_TYPE=${type}" >> "$GITHUB_ENV"
+          OR_COMMIT=$(docker run --rm apache/apisix-runtime-deb:0.0.0 cat /tmp/openresty-commit || true)
+          OR_VERSION=$(docker run --rm apache/apisix-runtime-deb:0.0.0 cat /tmp/openresty-version || true)
+          {
+            echo "OPENRESTY_COMMIT=${OR_COMMIT}"
+            echo "OPENRESTY_VERSION=${OR_VERSION}"
+          } >> "$GITHUB_ENV"
 
-      - name: Check Tags Type
-        if: ${{ env.TAG_TYPE != 'apisix' && env.TAG_TYPE != 'apisix-base' }}
+      - name: Build apisix deb
         run: |
-          echo "##[error]Tag type is not correct, or not support, please check it."
-          exit 1
+          # Build only the apisix image on top of the runtime image built in
+          # the previous step, then package it. The top-level
+          # `make package app=apisix` target would rebuild apisix-runtime by
+          # cloning the api7 upstream branch, bypassing the OpenResty master
+          # source built above.
+          make build-fpm
+          make build-apisix-deb checkout=${TAG_VERSION} version=${TAG_VERSION} \
+            image_base=debian image_tag=bookworm-slim \
+            runtime_version=0.0.0
+          make package-apisix-deb version=${TAG_VERSION} \
+            image_base=debian image_tag=bookworm-slim \
+            openresty=apisix-runtime runtime_version=0.0.0
+          mv ./output/apisix_${TAG_VERSION}-0~debianbookworm-slim_amd64.deb "${VAR_DEB_WORKBENCH_DIR}/"
 
-      - name: Build apisix-base deb Package
-        if: ${{ env.TAG_TYPE == 'apisix-base' }}
+      - name: Smoke test on Debian 12
         run: |
-          make package type=deb app=${TAG_TYPE} checkout=${TAG_VERSION} version=${TAG_VERSION} image_base=${VAR_OS} image_tag=${VAR_OS_RELEASE} openresty=apisix-base
-          mv ./output/${TAG_TYPE}_${TAG_VERSION}-0~${VAR_OS}${VAR_OS_RELEASE}_${ARCH}.deb ${VAR_DEB_WORKBENCH_DIR}
+          docker run --rm \
+            -v "${VAR_DEB_WORKBENCH_DIR}:/output" \
+            -e DEB=apisix_${TAG_VERSION}-0~debianbookworm-slim_amd64.deb \
+            debian:bookworm bash -exc '
+              apt-get update -qq
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --allow-unauthenticated /output/$DEB
+              test -x /usr/local/openresty/bin/openresty
+              /usr/local/openresty/bin/openresty -V 2>&1 | head -3
+              /usr/local/openresty/luajit/bin/luajit -e "assert(pcall(require, \"resty.limit.traffic\"))"
+              /usr/local/apisix/bin/apisix version
+            '
 
-      - name: Build apisix deb Package
-        if: ${{ env.TAG_TYPE == 'apisix' }}
-        run: |
-          wget https://raw.githubusercontent.com/apache/apisix/${TAG_VERSION}/.requirements && source .requirements
-
-          make package type=deb app=${TAG_TYPE} checkout=${TAG_VERSION} version=${TAG_VERSION} image_base=${VAR_OS} image_tag=${VAR_OS_RELEASE} openresty=apisix-runtime runtime_version=${APISIX_RUNTIME}
-          mv ./output/${TAG_TYPE}_${TAG_VERSION}-0~${VAR_OS}${VAR_OS_RELEASE}_${ARCH}.deb ${VAR_DEB_WORKBENCH_DIR}
-
-      - name: Build apisix-runtime deb Package
-        if: ${{ env.TAG_TYPE == 'apisix-runtime' }}
-        run: |
-          echo build ${TAG_TYPE} deb package
-          echo version ${TAG_VERSION}
-
-          make package type=deb app=${TAG_TYPE} checkout=${TAG_VERSION} version=${TAG_VERSION} image_base=${VAR_OS} image_tag=${VAR_OS_RELEASE} openresty=apisix-runtime
-          mv ./output/${TAG_TYPE}_${TAG_VERSION}-0~${VAR_OS}${VAR_OS_RELEASE}_${ARCH}.deb ${VAR_DEB_WORKBENCH_DIR}
-
-      - name: Upload apisix/apisix-runtime/apisix-base Artifact
-        uses: actions/upload-artifact@v4.0.0
+      - name: Upload deb artifacts
+        uses: actions/upload-artifact@v4
         with:
-          name: "${{ env.TAG_TYPE }}_${{ env.TAG_VERSION }}-0~${{ env.VAR_OS }}${{ env.VAR_OS_RELEASE }}_${{ env.ARCH }}.deb"
-          path: "${{ env.VAR_DEB_WORKBENCH_DIR }}/${{ env.TAG_TYPE}}_${{ env.TAG_VERSION }}-0~${{ env.VAR_OS }}${{ env.VAR_OS_RELEASE }}_${{ env.ARCH }}.deb"
-
-      - name: DEB repo deps init
-        env:
-          TENCENT_COS_SECRETID: ${{ secrets.TENCENT_COS_SECRETID }}
-          TENCENT_COS_SECRETKEY: ${{ secrets.TENCENT_COS_SECRETKEY }}
-        run: |
-          sudo pip install coscmd
-          sudo -E ./utils/publish-deb.sh init_cos_utils
-
-      - name: DEB repo init for debian
-        run: |
-          sudo -E ./utils/publish-deb.sh repo_clone
-
-      - name: DEB repo package update
-        env:
-          # DEB is signed with the SAME key as RPM (RPM_GPG_* below); the two
-          # pipelines historically used separate secrets, which led to a
-          # throwaway personal key being minted for DEB. Key uid email is
-          # published in KEYS — not a secret.
-          DEB_GPG_MAIL: dev@apisix.apache.org
-        run: |
-          echo "${{ secrets.RPM_GPG_PRIV_KEY }}" >> /tmp/deb-gpg-publish.private
-          echo "${{ secrets.RPM_GPG_PASSPHRASE }}" >> /tmp/deb-gpg-publish.passphrase
-          sudo -E ./utils/publish-deb.sh init_freight_utils
-          sudo -E ./utils/publish-deb.sh init_gpg
-
-      - name: DEB repo backup for debian
-        run: |
-          sudo -E ./utils/publish-deb.sh dists_backup
-
-      - name: DEB repo refresh for debian
-        run: |
-          sudo -E ./utils/publish-deb.sh repo_rebuild
-          sudo -E ./utils/publish-deb.sh repo_ci_upload
-
-      - name: DEB repo publish for debian
-        env:
-          UPLOAD_TARGET_FILE: "${{ env.TAG_TYPE }}_${{ env.TAG_VERSION }}-0_${{ env.ARCH }}.deb"
-        run: |
-          sudo -E ./utils/publish-deb.sh repo_upload
-          sudo -E ./utils/publish-deb.sh repo_publish
+          name: "apisix_${{ env.TAG_VERSION }}_debian12_amd64"
+          path: |
+            ${{ env.VAR_DEB_WORKBENCH_DIR }}/*.deb
+          if-no-files-found: error

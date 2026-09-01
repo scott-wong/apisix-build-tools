@@ -5,6 +5,21 @@
 - Make
 - rpm (if your host system is Ubuntu, should install rpmbuild by `sudo apt-get install rpm`)
 
+## About this fork
+
+This is a trimmed fork of [apache/apisix-build-tools](https://github.com/apache/apisix-build-tools)
+with a single purpose: build the **APISIX deb package for Debian 12 (amd64)** with a
+runtime compiled **from the latest OpenResty master source** (not a pinned release).
+
+- Trigger: push a tag `apisix/<APISIX version>` (e.g. `apisix/3.18.0`), which builds
+  APISIX from the matching upstream tag. See [docs/adr/0001](docs/adr/0001-openresty-master-source-for-runtime.md)
+  and [docs/adr/0002](docs/adr/0002-artifact-only-delivery.md).
+- Delivery: artifacts only. There is no apt repository, no GPG signing, and no COS upload;
+  download the deb from the workflow run's artifacts and install with `dpkg -i`.
+- Scope: only `publish-deb.yml`, the `deb` path (`app=apisix` / `app=apisix-runtime`),
+  and related scripts are maintained. The RPM, apk, dashboard, and apisix-base pipelines
+  have been removed.
+
 ## Parameters
 | Parameter       | Required | Description                                                                                                                                                                       | Example                              |
 |-----------------|----------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------|

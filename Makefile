@@ -27,6 +27,7 @@ openresty="apisix-runtime"
 artifact="0"
 runtime_version=0
 build_latest=
+openresty_source=release
 apisix_repo="https://github.com/apache/apisix"
 apisix_runtime_repo="https://github.com/api7/apisix-build-tools.git"
 dashboard_repo="https://github.com/apache/apisix-dashboard"
@@ -101,6 +102,7 @@ define build_runtime
 		--build-arg IMAGE_BASE=$(image_base) \
 		--build-arg IMAGE_TAG=$(image_tag) \
 		--build-arg BUILD_LATEST=$(build_latest) \
+		--build-arg OPENRESTY_SOURCE=$(openresty_source) \
 		--build-arg CODE_PATH=$(4) \
     --platform $(arch) \
 		-f ./dockerfiles/Dockerfile.$(2).$(3) .
@@ -114,6 +116,7 @@ define build_runtime
 		--build-arg IMAGE_BASE=$(image_base) \
 		--build-arg IMAGE_TAG=$(image_tag) \
 		--build-arg BUILD_LATEST=$(build_latest) \
+		--build-arg OPENRESTY_SOURCE=$(openresty_source) \
 		--build-arg CODE_PATH=$(4) \
 		--load \
 		--cache-from=$(cache_from) \
@@ -170,7 +173,6 @@ define package
 	docker run -d --rm --name output --net="host" apache/$(1)-packaged-$(2):$(version)
 	docker cp output:/output ${PWD}
 	docker stop output
-	docker system prune -a -f
 endef
 
 ### function for packing
@@ -190,8 +192,11 @@ define package_runtime
 	docker run -d --rm --name output --net="host" apache/$(1)-packaged-$(2):$(runtime_version)
 	docker cp output:/output ${PWD}
 	docker stop output
-	docker system prune -a -f
 endef
+
+.PHONY: docker-cleanup
+docker-cleanup:
+	docker system prune -a -f
 
 ### build apisix:
 .PHONY: build-apisix-rpm

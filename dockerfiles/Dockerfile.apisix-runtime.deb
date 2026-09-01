@@ -10,6 +10,7 @@ ARG RUNTIME_VERSION
 ARG IMAGE_BASE
 ARG IMAGE_TAG
 ARG BUILD_LATEST
+ARG OPENRESTY_SOURCE
 ARG CODE_PATH
 
 ENV IMAGE_BASE=${IMAGE_BASE}
@@ -17,6 +18,7 @@ ENV IMAGE_TAG=${IMAGE_TAG}
 ENV version=${VERSION}
 ENV runtime_version=${RUNTIME_VERSION}
 ENV build_latest=${BUILD_LATEST:-}
+ENV OPENRESTY_SOURCE=${OPENRESTY_SOURCE:-release}
 
 COPY ${CODE_PATH} ./
 
@@ -30,3 +32,6 @@ FROM ${IMAGE_BASE}:${IMAGE_TAG} as prod
 COPY --from=build /usr/local /usr/local
 COPY --from=build /tmp/dist /tmp/dist
 COPY --from=build /tmp/codename /tmp/codename
+# OpenResty source provenance, written by build-apisix-runtime.sh
+COPY --from=build /tmp/openresty-commit* /tmp/
+COPY --from=build /tmp/openresty-version* /tmp/

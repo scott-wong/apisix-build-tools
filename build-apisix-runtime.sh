@@ -22,6 +22,11 @@ ld_opt=${ld_opt:-"-L$zlib_prefix/lib -L$pcre_prefix/lib -L$OPENSSL_PREFIX/lib -W
 # dependencies for building openresty
 OPENSSL_VERSION=${OPENSSL_VERSION:-"3.4.1"}
 OPENRESTY_VERSION=${OPENRESTY_VERSION:-"1.29.2.4"}
+# OPENRESTY_SOURCE=master builds from the openresty/openresty master branch
+# (via util/mirror-tarballs) instead of a pinned release tarball. The real
+# version is read from the repo's util/ver at build time and written to
+# /tmp/openresty-version so the workflow can record it.
+OPENRESTY_SOURCE=${OPENRESTY_SOURCE:-"release"}
 if [[ ! "$OPENRESTY_VERSION" =~ ^[0-9]+(\.[0-9]+)+$ ]]; then
     echo "ERROR: invalid OPENRESTY_VERSION: $OPENRESTY_VERSION" >&2
     exit 1
@@ -89,8 +94,25 @@ cd "$workdir" || exit 1
 
 install_openssl_3
 
-wget --no-check-certificate "https://openresty.org/download/openresty-${OPENRESTY_VERSION}.tar.gz"
-tar -zxvpf "openresty-${OPENRESTY_VERSION}.tar.gz" > /dev/null
+if [ "$OPENRESTY_SOURCE" == "master" ]; then
+    rm -rf openresty-src openresty-master.tar.gz
+    git clone --depth=1 https://github.com/openresty/openresty.git openresty-src
+    echo "Building OpenResty from master commit $(git -C openresty-src rev-parse HEAD)"
+    git -C openresty-src rev-parse HEAD > /tmp/openresty-commit
+    ( cd openresty-src && ./util/mirror-tarballs )
+    OR_SRC_VERSION=$( cd openresty-src && ./util/ver )
+    echo "$OR_SRC_VERSION" > /tmp/openresty-version
+    echo "OpenResty master source version: $OR_SRC_VERSION"
+    tar -zxvpf openresty-src/openresty-${OR_SRC_VERSION}.tar.gz > /dev/null
+else
+    wget --no-check-certificate "https://openresty.org/download/openresty-${OPENRESTY_VERSION}.tar.gz"
+    tar -zxvpf "openresty-${OPENRESTY_VERSION}.tar.gz" > /dev/null
+fi
+or_dir="openresty-${OPENRESTY_VERSION}"
+if [ "$OPENRESTY_SOURCE" == "master" ]; then
+    or_dir="openresty-${OR_SRC_VERSION}"
+fi
+echo "Using OpenResty source directory: $or_dir"
 
 if [ "$repo" == lua-resty-events ]; then
     cp -r "$prev_workdir" ./lua-resty-events-${lua_resty_events_ver}
@@ -149,11 +171,11 @@ else
 fi
 
 cd ngx_multi_upstream_module-${ngx_multi_upstream_module_ver} || exit 1
-./patch.sh ../openresty-${OPENRESTY_VERSION}
+./patch.sh ../${or_dir}
 cd ..
 
 cd "apisix-nginx-module-${apisix_nginx_module_ver}/patch" || exit 1
-./patch.sh ../../openresty-${OPENRESTY_VERSION}
+./patch.sh ../../${or_dir}
 cd ../..
 
 cd wasm-nginx-module-${wasm_nginx_module_ver} || exit 1
@@ -164,18 +186,24 @@ cd ..
 luajit_xcflags=${luajit_xcflags:="-DLUAJIT_NUMMODE=2 -DLUAJIT_ENABLE_LUA52COMPAT"}
 no_pool_patch=${no_pool_patch:-}
 
-cd openresty-${OPENRESTY_VERSION} || exit 1
+cd ${or_dir} || exit 1
 
 or_limit_ver=0.09
-if [ ! -d "bundle/lua-resty-limit-traffic-$or_limit_ver" ]; then
-    echo "ERROR: the official repository of lua-resty-limit-traffic has been updated, please sync to API7's repository." >&2
-    exit 1
-else
-    rm -rf bundle/lua-resty-limit-traffic-$or_limit_ver
-    limit_ver=1.2.0
+limit_ver=1.2.0
+# Replace the bundled lua-resty-limit-traffic with API7's fork. The release
+# tarball bundles it under a version that has drifted across releases, so
+# match the bundle directory by prefix; OpenResty master dropped the bundle
+# entirely, in which case API7's fork is installed into lualib after `make
+# install` instead.
+limit_bundle_dir=$(find bundle -maxdepth 1 -type d -name 'lua-resty-limit-traffic-*' | head -n 1)
+if [ -n "$limit_bundle_dir" ]; then
+    or_limit_ver=${limit_bundle_dir##*/}
+    rm -rf "$limit_bundle_dir"
     wget "https://github.com/api7/lua-resty-limit-traffic/archive/refs/tags/v$limit_ver.tar.gz" -O "lua-resty-limit-traffic-$limit_ver.tar.gz"
     tar -xzf lua-resty-limit-traffic-$limit_ver.tar.gz
-    mv lua-resty-limit-traffic-$limit_ver bundle/lua-resty-limit-traffic-$or_limit_ver
+    mv lua-resty-limit-traffic-$limit_ver "bundle/$or_limit_ver"
+else
+    echo "lua-resty-limit-traffic not in bundle; will install API7's fork into lualib."
 fi
 
 
@@ -232,6 +260,18 @@ export NGX_HTTP_LUA_MODULE_DIR="$PWD/$ngx_lua_bundle_dir"
 make -j`nproc`
 sudo make install
 cd ..
+
+# Install API7's lua-resty-limit-traffic into lualib when the OpenResty
+# source (master) does not bundle it. Cwd here is $workdir.
+if [ ! -d "$OR_PREFIX"/lualib/resty/limit ]; then
+    if [ ! -d lua-resty-limit-traffic-$limit_ver ]; then
+        wget "https://github.com/api7/lua-resty-limit-traffic/archive/refs/tags/v$limit_ver.tar.gz" -O "lua-resty-limit-traffic-$limit_ver.tar.gz"
+        tar -xzf lua-resty-limit-traffic-$limit_ver.tar.gz
+    fi
+    echo "installing lua-resty-limit-traffic into $OR_PREFIX/lualib"
+    sudo install -d "$OR_PREFIX"/lualib/resty/limit/
+    sudo install -m 644 lua-resty-limit-traffic-$limit_ver/lib/resty/limit/*.lua "$OR_PREFIX"/lualib/resty/limit/
+fi
 
 cd lua-resty-events-${lua_resty_events_ver} || exit 1
 sudo install -d "$OR_PREFIX"/lualib/resty/events/
