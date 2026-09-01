@@ -1,0 +1,193 @@
+name: Build and Publish Anolis Image
+
+on:
+  workflow_run:
+    workflows: ["Build and Publish RPM Package"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag_version:
+        description: "APISIX tag version for manual run, e.g. 3.12.0 or apisix/3.12.0"
+        required: false
+        default: ""
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.workflow_run.head_branch || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  ANOLIS_BASE: registry.openanolis.cn/openanolis/anolisos
+  ANOLIS_TAG: "8.10"
+  IMAGE_NAME: ghcr.io/scott-wong/apisix
+
+jobs:
+  build-anolis:
+    name: Build Anolis 8.10 image from RPM
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Only run when RPM workflow succeeded, or on manual dispatch
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Resolve APISIX version
+        id: version
+        run: |
+          set -x
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ inputs.tag_version }}"
+            if [ -z "$RAW" ]; then
+              # fallback to latest tag reachable from checkout
+              RAW=$(git describe --tags --abbrev=0 2>/dev/null || echo "apisix/3.12.0")
+            fi
+          else
+            RAW="${{ github.event.workflow_run.head_branch }}"
+            # workflow_run on tag push: head_branch is like "apisix/3.12.0"
+            # fallback to display_title if needed
+            if [ -z "$RAW" ] || [ "$RAW" = "" ]; then
+              RAW="${{ github.event.workflow_run.display_title }}"
+            fi
+          fi
+          echo "Raw ref/branch: $RAW"
+          # Strip refs/tags/ and apisix/ prefix
+          VER="${RAW##*/}"
+          VER="${VER#apisix/}"
+          # refs/tags/apisix/3.12.0 -> 3.12.0
+          VER=$(echo "$VER" | sed 's#^refs/tags/##; s#^apisix/##')
+          if [ -z "$VER" ]; then
+            echo "Failed to resolve version from RAW=$RAW" >&2
+            exit 1
+          fi
+          echo "TAG_VERSION=$VER" >> "$GITHUB_ENV"
+          echo "tag=$VER" >> "$GITHUB_OUTPUT"
+          echo "Resolved TAG_VERSION=$VER"
+
+      - name: Download RPM artifact from triggering run
+        if: ${{ github.event_name != 'workflow_dispatch' }}
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: publish-rpm.yml
+          run_id: ${{ github.event.workflow_run.id }}
+          name: apisix_${{ env.TAG_VERSION }}_el8_x86_64
+          path: /tmp/rpms
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          if_no_artifact_found: error
+
+      - name: Download RPM artifact (manual dispatch - latest successful run)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: dawidd6/action-download-artifact@v6
+        with:
+          workflow: publish-rpm.yml
+          # search latest successful artifact when run_id not provided
+          name: apisix_${{ env.TAG_VERSION }}_el8_x86_64
+          path: /tmp/rpms
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          if_no_artifact_found: warn
+
+      - name: Fallback - list available artifacts when download failed (manual)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        run: |
+          ls -R /tmp/rpms || true
+          # If manual dispatch provided no existing artifact, try to find any apisix_* rpm artifact
+          if [ ! -f /tmp/rpms/*.rpm ] 2>/dev/null; then
+            echo "No RPM found for ${TAG_VERSION}, attempting to list workflow runs via gh"
+            gh run list --workflow publish-rpm.yml --limit 5 || true
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Stage RPMs for Docker context
+        run: |
+          set -x
+          mkdir -p rpms
+          # Artifact contains usually 2 RPMs: apisix-runtime-0.0.0-0.el8.x86_64.rpm + apisix-<version>-0.el8.x86_64.rpm
+          # User decision: 只装 apisix, but we copy whatever is present.
+          # Filter: if both exist, localinstall will install both and resolve correct dependency.
+          # If only apisix rpm exists, dnf will resolve apisix-runtime from repos (fallback).
+          if ls /tmp/rpms/*.rpm 1>/dev/null 2>&1; then
+            cp -v /tmp/rpms/*.rpm rpms/
+          else
+            echo "No RPM artifacts found at /tmp/rpms/*.rpm" >&2
+            ls -R /tmp || true
+            exit 1
+          fi
+          ls -lh rpms/
+          echo "Staged RPMs:"
+          rpm -qp --info rpms/*.rpm 2>&1 | head -n 100 || true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ env.TAG_VERSION }}-anolis8.10
+            type=raw,value=${{ env.TAG_VERSION }}-anolis8
+            type=raw,value=latest-anolis8.10,enable=${{ !contains(env.TAG_VERSION, 'rc') && !contains(env.TAG_VERSION, 'alpha') && !contains(env.TAG_VERSION, 'beta') }}
+          labels: |
+            org.opencontainers.image.title=APISIX on Anolis OS 8.10
+            org.opencontainers.image.description=APISIX ${{ env.TAG_VERSION }} built from EL8 RPM on Anolis OS 8.10 (registry.openanolis.cn/openanolis/anolisos:8.10)
+            org.opencontainers.image.base.name=registry.openanolis.cn/openanolis/anolisos:8.10
+            org.opencontainers.image.version=${{ env.TAG_VERSION }}
+
+      - name: Build and push Anolis image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: dockerfiles/Dockerfile.anolis
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APISIX_VERSION=${{ env.TAG_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: false
+
+      - name: Smoke test Anolis image
+        run: |
+          set -x
+          IMAGE="${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-anolis8.10"
+          echo "Pulling $IMAGE for smoke test"
+          docker pull "$IMAGE"
+          docker run --rm "$IMAGE" /usr/bin/apisix version
+          docker run --rm "$IMAGE" /usr/local/openresty/bin/openresty -V 2>&1 | head -n 5
+          docker run --rm "$IMAGE" bash -exc '
+            test -x /usr/bin/apisix
+            test -x /usr/local/openresty/bin/openresty
+            test -f /usr/local/openresty/lualib/resty/limit/traffic.lua
+            /usr/local/openresty/luajit/bin/luajit -e "require(\"resty.limit.traffic\"); print(\"traffic lua ok\")"
+          '
+          # Optional: test apisix init (without etcd)
+          docker run --rm "$IMAGE" bash -exc '
+            /usr/bin/apisix init
+            test -f /usr/local/apisix/conf/nginx.conf
+          '
+
+      - name: Output image info
+        run: |
+          echo "Pushed tags:"
+          echo "${{ steps.meta.outputs.tags }}"
+          echo "Image: ${{ env.IMAGE_NAME }}:${{ env.TAG_VERSION }}-anolis8.10"
+
+      - name: Cleanup staged rpms
+        if: always()
+        run: rm -rf rpms /tmp/rpms

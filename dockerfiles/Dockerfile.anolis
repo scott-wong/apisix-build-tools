@@ -1,0 +1,40 @@
+# Anolis OS 8.10 base for APISIX RPM installation
+# Reference: https://github.com/apache/apisix-docker/blob/master/redhat/Dockerfile
+# This Dockerfile installs the locally built APISIX RPMs (built by publish-rpm.yml)
+# via `dnf localinstall` instead of pulling from apiseven repo.
+FROM registry.openanolis.cn/openanolis/anolisos:8.10
+
+# No ARG needed for version when using local RPMs, but keep for label compatibility
+ARG APISIX_VERSION
+
+# Enable EPEL (provides some dependencies like openldap compat) and clean cache
+# Anolis 8.10 uses dnf with AppStream/PowerTools (CRB). The APISIX RPM install
+# needs libyaml from CRB; --enablerepo=crb is handled inside install deps when needed,
+# but we ensure EPEL is present and redis module is disabled to avoid conflicts
+# (mirrors apisix-docker/redhat/Dockerfile behavior).
+RUN set -x \
+    && dnf -y install epel-release \
+    && (dnf module disable -y redis || true) \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/cache/yum
+
+# Copy RPMs staged by the workflow (expects rpms/*.rpm at build context root)
+# The workflow copies the artifact apisix_*.rpm into ./rpms/
+COPY rpms/*.rpm /tmp/
+
+# Install APISIX RPMs. Using `localinstall` resolves dependencies from Anolis
+# base + EPEL + AppStream. --nogpgcheck is required for locally built packages.
+# install_weak_deps=False keeps image lean. Keep yum/dnf cache cleanup to reduce layers.
+RUN set -x \
+    && dnf -y localinstall /tmp/*.rpm --nogpgcheck --setopt=install_weak_deps=False \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/cache/yum /tmp/*.rpm \
+    && /usr/local/openresty/bin/openresty -V 2>&1 | head -n 5 \
+    && /usr/bin/apisix version \
+    && apisix help 2>&1 | head -n 20
+
+EXPOSE 9080 9443
+
+STOPSIGNAL SIGQUIT
+
+CMD ["sh", "-c", "/usr/bin/apisix init && /usr/bin/apisix init_etcd && /usr/local/openresty/bin/openresty -p /usr/local/apisix -g 'daemon off;'"]
